@@ -33,6 +33,12 @@ import processing.app.ui.EditorButton;
 import processing.app.ui.EditorToolbar;
 import processing.mode.java.debug.Debugger;
 
+import java.awt.Color;
+import javax.swing.JColorChooser;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import java.awt.GridLayout;
+
 
 public class JavaToolbar extends EditorToolbar {
   JavaEditor jeditor;
@@ -57,6 +63,141 @@ public class JavaToolbar extends EditorToolbar {
       return false;
     }
     return jeditor.isDebuggerEnabled();
+  }
+
+  public void showThemePicker() {
+    // 1. Acceptance Criteria: Shown three options
+    String[] options = { "Outer Theme", "Inner Coding Area", "Console" };
+    String selection = (String) JOptionPane.showInputDialog(null, "Select element to change:",
+        "Theme Customizer", JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
+
+    if (selection == null) return;
+
+    // 2. Acceptance Criteria: Color picker square with scrolls & Hex input
+    // JColorChooser handles the hex box and preview box automatically.
+    Color pickedColor = JColorChooser.showDialog(jeditor, "Customize " + selection, Color.WHITE);
+
+    if (pickedColor != null) {
+      String hex = String.format("#%02x%02x%02x", pickedColor.getRed(), pickedColor.getGreen(), pickedColor.getBlue());
+      
+      // 3. Map selection to Processing's internal Preference keys
+      if (selection.equals("Outer Theme")) {
+        processing.app.Preferences.set("header.color", hex); 
+        applyCustomColor(0, pickedColor); // Added this to trigger the update
+      } else if (selection.equals("Inner Coding Area")) {
+        processing.app.Preferences.set("editor.background", hex); // Changed from bgcolor
+        applyCustomColor(1, pickedColor); // Added this to trigger the update
+      } else {
+        processing.app.Preferences.set("console.color", hex);
+        applyCustomColor(2, pickedColor); // Added this to trigger the update
+      }
+
+      // 4. Acceptance Criteria: Immediately display and save
+      jeditor.getBase().handlePrefs(); // Applies and saves to preferences.txt
+      jeditor.rebuildHeader(); 
+    }
+  }
+
+  private void applyCustomColor(int optionIndex, Color pickedColor) {
+    String hex = String.format("#%02x%02x%02x", pickedColor.getRed(), pickedColor.getGreen(), pickedColor.getBlue());
+    java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(this);
+
+    if (optionIndex == 0) { // OUTER THEME (Toolbar/Tabs)
+      processing.app.Preferences.set("header.color", hex);
+      if (jeditor != null) {
+        jeditor.applyCustomColors();
+        jeditor.rebuildHeader();
+      }
+    } 
+    else if (optionIndex == 1) { // INNER THEME (The Code Editor)
+      processing.app.Preferences.set("editor.background", hex);
+      // This tells the text area to update its internal theme
+      if (jeditor != null) {
+        jeditor.applyCustomColors(); 
+        jeditor.getTextArea().setBackground(pickedColor);
+      }
+    } 
+    else if (optionIndex == 2) { // CONSOLE THEME (The Bottom Area)
+      processing.app.Preferences.set("console.color", hex);
+      if (jeditor != null) {
+        jeditor.applyCustomColors();
+      }
+    }
+
+    // Always repaint at the very end
+    if (window != null) {
+      window.repaint();
+    }
+  }
+
+  private void vanquishBlueSurgically(java.awt.Component comp, Color c, int mode) {
+    if (comp == null) return;
+    String className = comp.getClass().getName();
+    String hex = String.format("#%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
+
+    // Identify the parts
+    boolean isConsole = className.contains("EditorConsole") || className.contains("ConsoleViewport") || comp instanceof javax.swing.JTextPane;
+    boolean isTextArea = comp == jeditor.getTextArea() || className.contains("TextArea");
+
+    if (mode == 2) { // CONSOLE MODE: Only paint the console
+      if (isConsole) paintComponentPink(comp, c, hex);
+    } 
+    else if (mode == 0) { // OUTER MODE: Paint everything ELSE
+      if (!isConsole && !isTextArea && !className.contains("ErrorTable")) {
+        paintComponentPink(comp, c, hex);
+      }
+    }
+
+    // Always dig deeper
+    if (comp instanceof java.awt.Container) {
+      for (java.awt.Component child : ((java.awt.Container)comp).getComponents()) {
+        vanquishBlueSurgically(child, c, mode);
+      }
+    }
+  }
+
+  // Helper to apply the actual pink paint
+  private void paintComponentPink(java.awt.Component comp, Color c, String hex) {
+    if (comp == null) return;
+    comp.setBackground(c);
+    
+    if (comp instanceof javax.swing.JComponent) {
+      javax.swing.JComponent jc = (javax.swing.JComponent) comp;
+      jc.setOpaque(true);
+
+      // SAFE STYLE: We removed 'selectionBackground' to stop the SEVERE errors
+      jc.putClientProperty("FlatLaf.style", "background: " + hex);
+      
+      // THE BLACK STRIP FIX (JScrollPane Guts)
+      if (comp instanceof javax.swing.JScrollPane) {
+        javax.swing.JScrollPane sp = (javax.swing.JScrollPane) comp;
+        
+        // Paint the viewport (The main area)
+        sp.getViewport().setBackground(c);
+        sp.getViewport().setOpaque(true);
+        
+        // Paint the Row Header (The left-side strip)
+        if (sp.getRowHeader() != null) {
+          sp.getRowHeader().setBackground(c);
+          sp.getRowHeader().setOpaque(true);
+          
+          java.awt.Component rowView = sp.getRowHeader().getView();
+          if (rowView instanceof javax.swing.JComponent) {
+            javax.swing.JComponent jrv = (javax.swing.JComponent) rowView;
+            jrv.setBackground(c);
+            jrv.setOpaque(true);
+            jrv.putClientProperty("FlatLaf.style", "background: " + hex);
+          }
+        }
+      }
+    }
+  }
+  
+
+  private Color getContrastColor(Color color) {
+    // Standard YIQ formula to determine if background is dark or light
+    double yiq = ((color.getRed() * 299) + (color.getGreen() * 587) + (color.getBlue() * 114)) / 1000;
+    return (yiq >= 128) ? Color.BLACK : Color.WHITE;
   }
 
 
@@ -123,6 +264,31 @@ public class JavaToolbar extends EditorToolbar {
       }
     };
     outgoing.add(stopButton);
+
+    // --- ADD THE THEME BUTTON HERE ---
+    EditorButton themeButton = new EditorButton(this,
+                                  "/lib/toolbar/run", 
+                                  "Toggle Theme") {
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        String[] options = {"Outer Theme", "Inner Coding Area", "Console"};
+        int selection = JOptionPane.showOptionDialog(jeditor, 
+            "Which element would you like to change?", 
+            "Theme Customizer", 
+            JOptionPane.DEFAULT_OPTION, 
+            JOptionPane.PLAIN_MESSAGE, 
+            null, options, options[0]);
+
+        if (selection != -1) {
+          // JColorChooser fulfills criteria for: Hex box, Preview box, and Sliders
+          Color pickedColor = JColorChooser.showDialog(jeditor, "Pick your color", Color.WHITE);
+          if (pickedColor != null) {
+            applyCustomColor(selection, pickedColor);
+          }
+        }
+      }
+    };
+    outgoing.add(themeButton);
 
     return outgoing;
   }

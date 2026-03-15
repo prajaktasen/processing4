@@ -590,7 +590,170 @@ public abstract class Editor extends JFrame implements RunnerListener {
     // Even though this is only updating the theme (colors, icons),
     // subclasses use this to apply other preferences.
     // For instance, Java Mode applies changes to error checking.
+    
     updateTheme();
+    applyCustomColors();
+  }
+
+  public void applyCustomColors() {
+    String headerHex = processing.app.Preferences.get("header.color");
+    String editorHex = processing.app.Preferences.get("editor.background");
+    String consoleHex = processing.app.Preferences.get("console.color");
+
+    // 1. OUTER THEME (Toolbar/Tabs/Frame)
+    if (headerHex != null) {
+      Color c = Color.decode(headerHex);
+      
+      // --- PUT THE TAB MYSTERY HERE ---
+      // This forces the "Selected" tab to match your pink/outer color
+      javax.swing.UIManager.put("TabbedPane.selectedBackground", c);
+      javax.swing.UIManager.put("TabbedPane.background", c.darker());
+      javax.swing.UIManager.put("TabbedPane.underlineColor", Color.WHITE);
+      // --------------------------------
+      
+      
+      // MODE 0: Paint everything EXCEPT the code area and console
+      forceColorRecursively(this, c, 0);
+    }
+
+    // 2. CONSOLE (The Bottom)
+    if (consoleHex != null && console != null) {
+        // MODE 2: ONLY paint the console and its specific black strip
+        forceColorRecursively(console, Color.decode(consoleHex), 2);
+    }
+
+    // 3. INNER (The actual code background)
+    if (editorHex != null && textarea != null) {
+        Color c = Color.decode(editorHex);
+        textarea.setBackground(c);
+        // ADD THIS: It forces the 'painter' (the part that draws the text) to use the color
+        textarea.getPainter().setBackground(c); 
+        textarea.getPainter().setOpaque(true);
+    }
+
+    // --- TARGET THE CODE GUTTER (Inner Strip) ---
+    if (editorHex != null && textarea != null) {
+      Color innerColor = Color.decode(editorHex);
+      
+      // Find the ScrollPane by looking at the textarea's parent
+      java.awt.Container parent = textarea.getParent();
+      if (parent instanceof javax.swing.JViewport) {
+        parent = parent.getParent(); // Viewport lives inside the ScrollPane
+      }
+
+      if (parent instanceof javax.swing.JScrollPane) {
+        javax.swing.JScrollPane textScroll = (javax.swing.JScrollPane) parent;
+        if (textScroll.getRowHeader() != null) {
+          textScroll.getRowHeader().setBackground(innerColor);
+          textScroll.getRowHeader().setOpaque(true);
+          
+          java.awt.Component gutterView = textScroll.getRowHeader().getView();
+          if (gutterView != null) {
+            gutterView.setBackground(innerColor);
+            if (gutterView instanceof javax.swing.JComponent) {
+              ((javax.swing.JComponent)gutterView).putClientProperty("FlatLaf.style", "background: " + editorHex);
+            }
+          }
+        }
+      }
+    }
+
+    // --- TARGET THE CONSOLE GUTTER (Bottom Strip) ---
+    if (consoleHex != null && console != null) {
+      Color consoleColor = Color.decode(consoleHex);
+      // We use the same logic for the console's scrollpane
+      for (java.awt.Component child : console.getComponents()) {
+        if (child instanceof javax.swing.JScrollPane) {
+          javax.swing.JScrollPane consoleScroll = (javax.swing.JScrollPane) child;
+          if (consoleScroll.getRowHeader() != null) {
+            consoleScroll.getRowHeader().setBackground(consoleColor);
+            if (consoleScroll.getRowHeader().getView() != null) {
+              consoleScroll.getRowHeader().getView().setBackground(consoleColor);
+            }
+          }
+        }
+      }
+    }
+
+    // Call the helper while still inside applyCustomColors
+    if (editorHex != null && textarea != null) {
+        Color c = Color.decode(editorHex);
+        findAndPaintGutter(this, c, editorHex);
+    }
+    
+    this.repaint();
+  }
+
+  private void findAndPaintGutter(java.awt.Container container, Color c, String hex) {
+    for (java.awt.Component comp : container.getComponents()) {
+      if (comp.getClass().getName().contains("Gutter")) {
+        comp.setBackground(c);
+        if (comp instanceof javax.swing.JComponent) {
+          ((javax.swing.JComponent)comp).putClientProperty("FlatLaf.style", "background: " + hex);
+        }
+      }
+      if (comp instanceof java.awt.Container) {
+        findAndPaintGutter((java.awt.Container) comp, c, hex);
+      }
+    }
+  }
+
+  private void forceColorRecursively(java.awt.Component comp, Color c, int mode) {
+    if (comp == null) return;
+    String hex = String.format("#%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
+    String className = comp.getClass().getName();
+
+    // GUARDRAILS: Check if we are touching things we shouldn't
+    boolean isConsole = className.contains("EditorConsole") || className.contains("Console") || className.contains("ErrorTable");
+    boolean isTextArea = className.contains("TextArea") || className.contains("EditorPane");
+
+    if (mode == 0) { // OUTER MODE
+        // Skip the inner "meat" of the editor so it doesn't turn the same color
+        if (isConsole || isTextArea) return; 
+        
+        // --- NEW POLISH LINES ---
+        if (comp instanceof javax.swing.JComponent) {
+          javax.swing.JComponent jc = (javax.swing.JComponent) comp;
+          // This targets the Tab bar and Toolbar specifically
+          jc.putClientProperty("FlatLaf.style", "background: " + hex);
+          
+          // If it's the Status Bar at the bottom
+          if (className.contains("EditorStatus")) {
+             jc.setBackground(c);
+             for (java.awt.Component child : jc.getComponents()) {
+               child.setBackground(c);
+             }
+          }
+        }
+    }
+
+    // Apply the paint
+    comp.setBackground(c);
+    if (comp instanceof javax.swing.JComponent) {
+        javax.swing.JComponent jc = (javax.swing.JComponent) comp;
+        jc.setOpaque(true);
+        //String hex = String.format("#%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
+        jc.putClientProperty("FlatLaf.style", "background: " + hex);
+
+        // Targeted Black Strip Fix
+        if (comp instanceof javax.swing.JScrollPane) {
+            javax.swing.JScrollPane sp = (javax.swing.JScrollPane) comp;
+            sp.getViewport().setBackground(c);
+            if (sp.getRowHeader() != null) {
+                sp.getRowHeader().setBackground(c);
+                if (sp.getRowHeader().getView() != null) {
+                    sp.getRowHeader().getView().setBackground(c);
+                }
+            }
+        }
+    }
+
+    // Keep digging, but respect the guardrails
+    if (comp instanceof java.awt.Container) {
+        for (java.awt.Component child : ((java.awt.Container)comp).getComponents()) {
+            forceColorRecursively(child, c, mode);
+        }
+    }
   }
 
 
